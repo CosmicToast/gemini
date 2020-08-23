@@ -8,15 +8,30 @@ import (
 	"toast.cafe/x/gemini"
 )
 
+// A CertChecker verifies the validity of a certificate chain relative to a hostname.
+//
+// VerifyCert takes the hostname and the known certificate chain.
+// It should return nil if the certificate is valid for that hostname.
+type CertChecker interface {
+	VerifyCert(string, []*x509.Certificate) error
+}
+
+// CertCheckerFunc is an adapter that allows using standalone functions as a CertChecker
+type CertCheckerFunc func(string, []*x509.Certificate) error
+
+func (c CertCheckerFunc) VerifyCert(s string, cs []*x509.Certificate) error {
+	return c(s, cs)
+}
+
 // Client is a gemini client
 type Client struct {
 	TLSConfig *tls.Config
 	Proxy     string // "" means direct, should include port
 
-	// VerifyCert should return true or false on whether or not any cert in the set is valid for a given host
+	// Checker will be used by this client to verify hostnames.
 	//
 	// If nil, all certs are considered valid for all hosts.
-	VerifyCert func(string, []*x509.Certificate) bool
+	Checker CertChecker
 }
 
 // DefaultClient is the default
@@ -35,7 +50,7 @@ func (c *Client) SetCertificates(certs ...tls.Certificate) {
 func (c *Client) Do(ctx *gemini.Ctx) error {
 	host := c.Proxy
 	if host == "" {
-		host = ctx.Req.Host
+		host = ctx.Req.Host()
 	}
 
 	// get connection
@@ -45,8 +60,10 @@ func (c *Client) Do(ctx *gemini.Ctx) error {
 	}
 	ctx.ServerCerts = con.ConnectionState().PeerCertificates
 
-	if c.VerifyCert != nil && !c.VerifyCert(host, ctx.ServerCerts) {
-		return fmt.Errorf("%w: VerifyCert returned false", gemini.ErrCert)
+	if c.Checker != nil {
+		if err := c.Checker.VerifyCert(host, ctx.ServerCerts); err != nil {
+			return fmt.Errorf("VerifyCert returned an error: %w", err)
+		}
 	}
 
 	// send request
@@ -66,7 +83,7 @@ func (c *Client) Fetch(req string) (*gemini.Ctx, error) {
 		return nil, err
 	}
 
-	if canon := ctx.Req.Canonicalize(nil); !canon {
+	if canon := ctx.Req.Canonicalize(); !canon {
 		return nil, fmt.Errorf("%w: canonicalization failed", gemini.ErrRequest)
 	}
 

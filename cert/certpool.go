@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// CertPool implements a managed certificate pool.
+// CertPool implements a managed certificate pool for servers.
 //
 // Specifically, it implements a string-keyed repository of certificates that one can "Get" from.
 // If a given certificate is missing or expired from the stateful directory, it will be automatically generated in the background.
