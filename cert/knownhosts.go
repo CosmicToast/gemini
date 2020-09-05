@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
+	"path/filepath"
 	"time"
 
 	"toast.cafe/x/gemini"
@@ -26,6 +28,29 @@ type KnownHosts struct {
 	hosts map[string]Host // cache
 }
 
+// NewKnownHosts creates a KnownHost certificate verifier backed by the file at path.
+func NewKnownHosts(path string) (*KnownHosts, error) {
+	dir := filepath.Dir(path)
+	if fi, _ := os.Stat(dir); fi == nil || !fi.IsDir() {
+		if fi != nil { // exists, is not dir
+			return nil, nil // TODO: this is an error
+		}
+		// does not exist, create
+		err := os.MkdirAll(dir, 0755)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	res := KnownHosts{path, nil}
+	err := res.Load()
+	if err != nil { // file didn't exist, just initialize the map
+		res.hosts = make(map[string]Host)
+	}
+
+	return &res, nil
+}
+
 // VerifyCert verifies a host's certificate against a list of known certificates.
 //
 // This implementation returns nil if the certificate in the known hosts list is expired, replacing the version in the file.
@@ -43,6 +68,18 @@ func (r *KnownHosts) VerifyCert(host string, certs []*x509.Certificate) error {
 	} // it was expired, update - same action as when we don't have it
 	r.hosts[host] = Host{certs[0].NotAfter, Fingerprint(certs[0])}
 	return r.Save()
+}
+
+// Load will forcibly drop the cache and load it from the file at the path.
+func (r *KnownHosts) Load() error {
+	b, err := ioutil.ReadFile(r.path)
+	if err != nil {
+		return err
+	}
+
+	r.hosts = make(map[string]Host) // drop old cache
+	err = json.Unmarshal(b, r.hosts)
+	return err
 }
 
 // Save will forcibly save the known hosts file.
